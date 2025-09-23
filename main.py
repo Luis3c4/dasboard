@@ -173,8 +173,11 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("🎥 Cámara 1 - En Vivo"),
                 dbc.CardBody([
-                    html.Img(id="video-feed", src="https://via.placeholder.com/400x300/2d3748/ffffff?text=Live+Feed", 
-                            style={'width': '100%', 'border-radius': '8px', 'border': '2px solid #4a5568'})
+                    html.Img(id="video-feed", src="./assets/camara1.png", 
+                            style={'width': '100%', 'border-radius': '8px', 'border': '2px solid #4a5568', 'height': '350px'}),
+                    # Botón para cambiar cámara
+                    dbc.Button("Cambiar Cámara", id="btn-switch-camera", color="primary", 
+                    style={'margin-top': '10px', 'width': '100%'})
                 ])
             ], style={'margin-bottom': '20px'}),
             
@@ -332,6 +335,17 @@ def update_dashboard(n):
     return (f"{current_vehicles}", f"{wait_time:.1f}s", f"{reduction:.1f}%",
         trend_fig, classification_fig, heatmap_fig, traffic_light_fig, 
         recommendations_text, scatter_fig)
+# Agregar callback para alternar imagen entre dos cámaras
+@callback(
+    Output('video-feed', 'src'),
+    Input('btn-switch-camera', 'n_clicks'),
+    prevent_initial_call=True
+)
+def switch_camera(n_clicks):
+    if n_clicks is None or n_clicks % 2 == 0:
+        return "./assets/camara1.png"
+    else:
+        return "./assets/camara2.jpg"
 
 if __name__ == '__main__':
     app.run(debug=True)
