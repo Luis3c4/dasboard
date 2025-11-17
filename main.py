@@ -1,4 +1,3 @@
-
 from dash import Dash, html, dcc, callback, Input, Output
 import plotly.express as px
 import pandas as pd
@@ -6,7 +5,12 @@ import dash_bootstrap_components as dbc
 import numpy as np
 import plotly.graph_objects as go
 
+import cv2 
+from ultralytics import YOLO
+import base64
+from collections import defaultdict
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
 
 # CSS personalizado para tema oscuro
 app.index_string = '''
@@ -90,10 +94,48 @@ app.index_string = '''
     </body>
 </html>
 '''
+model = YOLO("yolov8n.pt")
+stream_url = "https://live.smartechlatam.online/claro/javierprado/index.m3u8"
+latest_counts = defaultdict(int)
 
-# Layout modificado - reemplazar desde "# KPIs con tema oscuro" hasta el final del Container
+def get_frame_from_stream(url):
+    cap = cv2.VideoCapture(url)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        return None
+
+    # --- PROCESAR CON YOLO ---
+    results = model(frame, imgsz=640, conf=0.5)
+    vehicle_counts = {
+        'car': 0,
+        'motorcycle': 0,
+        'bus': 0,
+        'truck': 0
+    }
+    for r in results:
+        for box in r.boxes:
+            cls = int(box.cls[0])
+            label = model.names[cls]
+
+            # Filtrar SOLO vehículos
+            if label in vehicle_counts:
+                vehicle_counts[label] += 1
+
+            # Dibujar cajas
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, (0, 255, 0), 2)
+    # Convertir frame → Base64
+    _, buffer = cv2.imencode('.jpg', frame)
+    encoded = base64.b64encode(buffer).decode('utf-8')
+    frame_b64 = f"data:image/jpeg;base64,{encoded}"
+    return frame_b64, vehicle_counts
+# Layout modificado 
 app.layout = dbc.Container([
-    # Header (sin cambios)
+    # Header
     html.Div([
         html.Img(src='/assets/logo_traffiq.png', style={'height': '60px', 'filter': 'brightness(1.2)'}),
         html.H1("TraffIQ - Operational Control System", 
@@ -173,11 +215,9 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("🎥 Cámara 1 - En Vivo"),
                 dbc.CardBody([
-                    html.Img(id="video-feed", src="./assets/camara1.png", 
+                    html.Img(id="video-feed", src= "./assets/camara1.png", 
                             style={'width': '100%', 'border-radius': '8px', 'border': '2px solid #4a5568', 'height': '350px'}),
                     # Botón para cambiar cámara
-                    dbc.Button("Cambiar Cámara", id="btn-switch-camera", color="primary", 
-                    style={'margin-top': '10px', 'width': '100%'})
                 ])
             ], style={'margin-bottom': '20px'}),
             
@@ -199,10 +239,9 @@ app.layout = dbc.Container([
     )
 ], fluid=True, style={'background-color': '#1a1a1a', 'min-height': '100vh', 'padding': '20px'})
 
-# Callback mejorado con tema oscuro para gráficos
+# Callback
 @callback(
-    [Output('total-vehicles', 'children'),
-     Output('avg-wait-time', 'children'),
+    [Output('avg-wait-time', 'children'),
      Output('reduction-percent', 'children'),
      Output('traffic-trend', 'figure'),
      Output('vehicle-classification', 'figure'),
@@ -219,7 +258,7 @@ def update_dashboard(n):
     wait_time = np.random.uniform(45, 120)
     reduction = np.random.uniform(15, 35)
     
-    # Gráfico de tendencia con tema oscuro
+    # Gráfico de tendencia
     hours = pd.date_range(start='2025-09-22 00:00', periods=24, freq='h')
     traffic_data = pd.DataFrame({
         'hora': hours,
@@ -239,7 +278,7 @@ def update_dashboard(n):
         title_font_color='#00d4ff'
     )
     
-    # Gráfico de clasificación con tema oscuro
+    # Gráfico de clasificación
     classification_data = pd.DataFrame({
         'tipo': ['Autos', 'Motos', 'Buses', 'Camiones'],
         'cantidad': [65, 20, 10, 5]
@@ -254,7 +293,7 @@ def update_dashboard(n):
         title_font_color='#00d4ff'
     )
     
-    # Heatmap de congestión con tema oscuro
+    # Heatmap de congestión
     days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
     hours_heat = list(range(24))
     congestion_matrix = np.random.randint(0, 100, (7, 24))
@@ -271,7 +310,7 @@ def update_dashboard(n):
         title_font_color='#00d4ff'
     )
     
-    # Indicador de semáforo con tema oscuro
+    # Indicador de semáforo
     light_status = np.random.choice(['verde', 'amarillo', 'rojo'])
     light_colors = {'verde': '#4ade80', 'amarillo': '#f7931e', 'rojo': '#ef4444'}
     countdown = np.random.randint(1, 30)
@@ -320,7 +359,7 @@ def update_dashboard(n):
         title_font_color='#00d4ff'
     )
     
-    # Recomendaciones con tema oscuro
+    # Recomendaciones
     recommendations_text = html.Div([
         html.H6("🤖 Recomendaciones Automáticas:", 
                 style={'color': '#00d4ff', 'margin-bottom': '10px', 'font-weight': 'bold'}),
@@ -332,20 +371,64 @@ def update_dashboard(n):
                style={'color': '#a0aec0', 'margin': '5px 0'})
     ])
     
-    return (f"{current_vehicles}", f"{wait_time:.1f}s", f"{reduction:.1f}%",
+    return (f"{wait_time:.1f}s", f"{reduction:.1f}%",
         trend_fig, classification_fig, heatmap_fig, traffic_light_fig, 
         recommendations_text, scatter_fig)
-# Agregar callback para alternar imagen entre dos cámaras
+#  callback para alternar imagen entre dos cámaras
 @callback(
     Output('video-feed', 'src'),
-    Input('btn-switch-camera', 'n_clicks'),
-    prevent_initial_call=True
+    Output('total-vehicles', 'children'),
+    Input('interval-component', 'n_intervals')
 )
-def switch_camera(n_clicks):
-    if n_clicks is None or n_clicks % 2 == 0:
-        return "./assets/camara1.png"
-    else:
-        return "./assets/camara2.jpg"
+def update_camera(n):
+    global latest_counts
+    frame, counts = get_frame_from_stream(stream_url)
 
+    if frame is None:
+        return "./assets/camara1.png", "--"
+    # Guardar conteos para otros callbacks
+    latest_counts = counts  
+    total = sum(counts.values())
+
+    return frame, str(total)
+# def switch_camera(n_clicks):
+#     if n_clicks is None or n_clicks % 2 == 0:
+#         return "./assets/camara1.png"
+#     else:
+#         return "./assets/camara2.jpg"
+@callback(
+    Output('vehicle-classification', 'figure'),
+    Input('interval-component', 'n_intervals')
+)
+def update_vehicle_pie(n):
+    # Tomar conteos globales
+    counts = latest_counts
+    
+    df = pd.DataFrame({
+        'tipo': ['Autos', 'Motos', 'Buses', 'Camiones'],
+        'cantidad': [
+            counts.get('car', 0),
+            counts.get('motorcycle', 0),
+            counts.get('bus', 0),
+            counts.get('truck', 0)
+        ]
+    })
+
+    fig = px.pie(
+        df,
+        values='cantidad',
+        names='tipo',
+        title="Clasificación de Vehículos (IA - YOLO)",
+        color_discrete_sequence=['#00d4ff', '#ff6b35', '#f7931e', '#4ade80']
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor='rgba(45,55,72,0.8)',
+        font_color='#ffffff',
+        title_font_color='#00d4ff'
+    )
+
+    return fig
 if __name__ == '__main__':
     app.run(debug=True)
