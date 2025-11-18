@@ -13,6 +13,9 @@ import dash_bootstrap_components as dbc
 
 import plotly.graph_objects as go
 import plotly.express as px
+from sklearn.linear_model import LinearRegression
+
+
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 
@@ -105,7 +108,27 @@ latest_counts = defaultdict(int)
 model = YOLO("yolov8n.pt")
 stream_url = "https://live.smartechlatam.online/claro/javierprado/index.m3u8"
 
+def predict_future_traffic(history, minutes_ahead=5):
+    if len(history) < 5:
+        return None, None  # No hay suficientes datos
 
+    df = pd.DataFrame(history)
+
+    # Crear variable temporal (0,1,2,...)
+    df["t"] = np.arange(len(df))
+
+    # Entrenar modelo simple
+    model = LinearRegression()
+    model.fit(df[["t"]], df["total"])
+
+    # Tiempo futuro
+    future_df = pd.DataFrame({"t": [len(df) + minutes_ahead]})
+    prediction = model.predict(future_df)[0]
+    # Error estimado (desviación estándar de residuos)
+    preds = model.predict(df[["t"]])
+    error = np.std(df["total"] - preds)
+
+    return prediction, error
 def get_frame_from_stream(url):
     cap = cv2.VideoCapture(url)
     ret, frame = cap.read()
@@ -309,12 +332,68 @@ def update_dashboard(n):
         trend_fig = go.Figure()
 
     # --------- HEATMAP ----------
-    heatmap_fig = px.imshow(
-        np.random.randint(0, 100, (7, 24)),
-        title="Mapa de Congestión",
-        color_continuous_scale="plasma"
+    pred, err = predict_future_traffic(traffic_history, minutes_ahead=5)
+    forecast_fig = go.Figure()
+
+    if pred is None:
+        # No data yet
+        forecast_fig.add_annotation(text="Aún no hay suficientes datos para predecir",
+                                    x=0.5, y=0.5, showarrow=False,
+                                    font=dict(color="white", size=18))
+    else:
+        if len(traffic_history) < 5:
+            df_hist = pd.DataFrame({
+                "t": [0, 1, 2, 3, 4],
+                "total": [0, 0, 0, 0, 0]
+            })
+        else:
+            df_hist = pd.DataFrame({
+                "t": range(len(traffic_history)),
+                "total": [h["total"] for h in traffic_history]
+            })
+        # Crear DataFrame extendido
+        df_future = pd.DataFrame({
+            "t": [len(df_hist) + 5],
+            "pred": [pred],
+            "hi": [pred + err],
+            "lo": [pred - err]
+        })
+        # Línea real
+        forecast_fig.add_trace(go.Scatter(
+            x=df_hist["t"],
+            y=df_hist["total"],
+            mode="lines+markers",
+            name="Tráfico Real",
+            line=dict(color="#00d4ff")
+        ))
+
+        # Predicción
+        forecast_fig.add_trace(go.Scatter(
+            x=df_future["t"],
+            y=df_future["pred"],
+            mode="lines+markers",
+            name="Predicción IA",
+            line=dict(color="#ffa500", dash="dash")
+        ))
+
+        # Área sombreada (intervalo de error)
+        forecast_fig.add_trace(go.Scatter(
+            x=[df_future["t"][0], df_future["t"][0]],
+            y=[df_future["lo"][0], df_future["hi"][0]],
+            fill="toself",
+            mode="lines",
+            name="Intervalo de error",
+            line=dict(color="rgba(255,255,255,0.3)")
+        ))
+
+    forecast_fig.update_layout(
+        title="🤖 Predicción IA de Tráfico (5 min al futuro)",
+        template="plotly_dark",
+        paper_bgcolor='rgba(45,55,72,0.8)',
+        plot_bgcolor='rgba(26,32,44,0.8)',
+        font_color='#ffffff',
+        title_font_color='#00d4ff'
     )
-    heatmap_fig.update_layout(template="plotly_dark")
 
     # --------- SEMÁFORO IA ----------
     light_colors = {'verde': '#4ade80', 'amarillo': '#f7931e', 'rojo': '#ef4444'}
@@ -354,13 +433,13 @@ def update_dashboard(n):
         html.H6("🤖 Recomendaciones IA"),
         html.P(f"• Estado sugerido: {light_status.upper()}"),
         html.P(f"• Razón: {ai_reason}"),
-        html.P(f"• Flujo actual: {ai_decision['current_flow']} vehículos"),
-        html.P(f"• Autos: {ai_decision['cars']} | Buses: {ai_decision['buses']}"),
-        html.P(f"• Factor congestión: {ai_decision['factor']}"),
+        html.P(f"• Flujo actual: {ai_decision.get('current_flow', 'N/A')} vehículos"),
+        html.P(f"• Autos: {ai_decision.get('cars', 0)} | Buses: {ai_decision.get('buses', 0)}"),
+        html.P(f"• Factor congestión: {ai_decision.get('factor', 'N/A')}"),
     ])
 
     return (f"{wait_time:.1f}s", f"{reduction:.1f}%",
-            trend_fig, heatmap_fig, traffic_light_fig,
+            trend_fig, forecast_fig, traffic_light_fig,
             recommendations_text, scatter_fig)
 
 
