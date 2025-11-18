@@ -1,14 +1,18 @@
-from dash import Dash, html, dcc, callback, Input, Output
-import plotly.express as px
-import pandas as pd
-import dash_bootstrap_components as dbc
-import numpy as np
-import plotly.graph_objects as go
-
-import cv2 
-from ultralytics import YOLO
+import cv2
 import base64
+import numpy as np
+import pandas as pd
+from datetime import datetime
 from collections import defaultdict
+
+from ultralytics import YOLO
+
+import dash
+from dash import Dash, html, dcc, callback, Output, Input
+import dash_bootstrap_components as dbc
+
+import plotly.graph_objects as go
+import plotly.express as px
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 
@@ -94,9 +98,13 @@ app.index_string = '''
     </body>
 </html>
 '''
+traffic_history = []
+latest_counts = defaultdict(int)
+
+# ------------------ YOLO ---------------------
 model = YOLO("yolov8n.pt")
 stream_url = "https://live.smartechlatam.online/claro/javierprado/index.m3u8"
-latest_counts = defaultdict(int)
+
 
 def get_frame_from_stream(url):
     cap = cv2.VideoCapture(url)
@@ -104,277 +112,259 @@ def get_frame_from_stream(url):
     cap.release()
 
     if not ret:
-        return None
+        return None, {}
 
-    # --- PROCESAR CON YOLO ---
     results = model(frame, imgsz=640, conf=0.5)
-    vehicle_counts = {
-        'car': 0,
-        'motorcycle': 0,
-        'bus': 0,
-        'truck': 0
-    }
+
+    vehicle_counts = {'car': 0, 'motorcycle': 0, 'bus': 0, 'truck': 0}
+
     for r in results:
         for box in r.boxes:
             cls = int(box.cls[0])
             label = model.names[cls]
 
-            # Filtrar SOLO vehículos
             if label in vehicle_counts:
                 vehicle_counts[label] += 1
 
-            # Dibujar cajas
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (0, 255, 0), 2)
-    # Convertir frame → Base64
+            cv2.putText(frame, label, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
     _, buffer = cv2.imencode('.jpg', frame)
     encoded = base64.b64encode(buffer).decode('utf-8')
     frame_b64 = f"data:image/jpeg;base64,{encoded}"
+
     return frame_b64, vehicle_counts
-# Layout modificado 
+
+
+# ------------------ AI SEMÁFORO ---------------------
+def ai_traffic_controller(history):
+    if len(history) < 5:
+        return {
+            "status": "verde",
+            "countdown": 20,
+            "reason": "Aún sin suficientes datos"
+        }
+
+    df = pd.DataFrame(history)
+
+    avg = df["total"].tail(10).mean()
+    current = df["total"].iloc[-1]
+    cars = df["cars"].iloc[-1]
+    buses = df["buses"].iloc[-1]
+
+    congestion_factor = current / max(1, avg)
+
+    if congestion_factor > 1.7 or buses > 5:
+        status = "rojo"
+        countdown = 35
+        reason = "Alta congestión, despejando vía"
+    elif congestion_factor > 1.2:
+        status = "amarillo"
+        countdown = 12
+        reason = "Congestión moderada"
+    else:
+        status = "verde"
+        countdown = 20
+        reason = "Flujo normal"
+
+    return {
+        "status": status,
+        "countdown": countdown,
+        "reason": reason,
+        "current_flow": current,
+        "cars": cars,
+        "buses": buses,
+        "factor": round(congestion_factor, 2)
+    }
+
+
+# ------------------ DASHBOARD ---------------------
+app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
+
+
 app.layout = dbc.Container([
-    # Header
+
+    # HEADER
     html.Div([
-        html.Img(src='/assets/logo_traffiq.png', style={'height': '60px', 'filter': 'brightness(1.2)'}),
-        html.H1("TraffIQ - Operational Control System", 
-                style={'display': 'inline-block', 'margin-left': '20px', 'color': '#00d4ff'})
-    ], className="dashboard-header", style={'display': 'flex', 'align-items': 'center', 'padding': '20px'}),
-    
-    # Layout de 3 columnas principal
+        html.Img(src='/assets/logo_traffiq.png',
+                 style={'height': '60px'}),
+        html.H1("TraffiQ - AI Traffic Control System",
+                style={'margin-left': '20px', 'color': '#00d4ff'})
+    ], style={'display': 'flex', 'align-items': 'center', 'padding': '20px'}),
+
     dbc.Row([
-        # COLUMNA 1 - Izquierda
+
+        # ---------------- COL 1 ----------------
         dbc.Col([
-            # KPI 1
             html.Div([
-                html.H4("Vehículos Detectados", className="kpi-label"),
-                html.H2(id="total-vehicles", children="--", className="kpi-value")
-            ], className="kpi-card", style={'margin-bottom': '20px'}),
-            
-            # Gráfico de clasificación de vehículos
+                html.H4("Vehículos Detectados"),
+                html.H2(id="total-vehicles", children="--")
+            ], className="kpi-card"),
+
             dbc.Card([
                 dbc.CardHeader("🚗 Clasificación de Vehículos"),
-                dbc.CardBody([
-                    dcc.Graph(id="vehicle-classification")
-                ])
-            ], style={'margin-bottom': '20px'}),
-            
-            # Gráfico scatter adicional (placeholder)
+                dbc.CardBody([dcc.Graph(id="vehicle-classification")])
+            ]),
+
             dbc.Card([
                 dbc.CardHeader("📊 Análisis de Correlación"),
-                dbc.CardBody([
-                    dcc.Graph(id="scatter-plot")
-                ])
+                dbc.CardBody([dcc.Graph(id="scatter-plot")])
             ])
         ], width=4),
-        
-        # COLUMNA 2 - Centro
+
+        # ---------------- COL 2 ----------------
         dbc.Col([
-            # KPI 2
             html.Div([
-                html.H4("Tiempo Espera Promedio", className="kpi-label"),
-                html.H2(id="avg-wait-time", children="--", className="kpi-value")
-            ], className="kpi-card", style={'margin-bottom': '20px'}),
-            
-            # Gráfico de tendencia principal (más grande)
+                html.H4("Tiempo Espera Promedio"),
+                html.H2(id="avg-wait-time", children="--")
+            ], className="kpi-card"),
+
             dbc.Card([
-                dbc.CardHeader("📈 Tendencia de Tráfico"),
-                dbc.CardBody([
-                    dcc.Graph(id="traffic-trend")
-                ])
-            ], style={'margin-bottom': '20px'}),
-            # Control de semáforo y recomendaciones DENTRO de la columna 2
+                dbc.CardHeader("📈 Tendencia del Tráfico"),
+                dbc.CardBody([dcc.Graph(id="traffic-trend")])
+            ]),
+
             dbc.Card([
-                dbc.CardHeader("🚦 Control de Semáforo y Recomendaciones"),
+                dbc.CardHeader("🚦 Control Semafórico IA"),
                 dbc.CardBody([
                     dbc.Row([
+                        dbc.Col([dcc.Graph(id="traffic-light-status")], width=6),
                         dbc.Col([
-                            dcc.Graph(id="traffic-light-status")
-                        ], width=6),
-                        dbc.Col([
-                            html.Div(id="recommendations", className="mt-3", 
-                                style={'background-color': '#1a202c', 'padding': '15px', 
-                                       'border-radius': '8px', 'border': '1px solid #4a5568',
-                                       'height': '250px'})
+                            html.Div(id="recommendations",
+                                     style={'padding': '15px',
+                                            'border': '1px solid #4a5568',
+                                            'border-radius': '8px',
+                                            'height': '250px'})
                         ], width=6)
                     ])
                 ])
             ])
         ], width=4),
-        
-        # COLUMNA 3 - Derecha
+
+        # ---------------- COL 3 ----------------
         dbc.Col([
-            # KPI 3
             html.Div([
-                html.H4("Reducción Lograda", className="kpi-label"),
-                html.H2(id="reduction-percent", children="--", className="kpi-value")
-            ], className="kpi-card", style={'margin-bottom': '20px'}),
-            
-            # Video feed
+                html.H4("Reducción Lograda"),
+                html.H2(id="reduction-percent", children="--")
+            ]),
+
             dbc.Card([
-                dbc.CardHeader("🎥 Cámara 1 - En Vivo"),
+                dbc.CardHeader("🎥 Cámara en Vivo"),
                 dbc.CardBody([
-                    html.Img(id="video-feed", src= "./assets/camara1.png", 
-                            style={'width': '100%', 'border-radius': '8px', 'border': '2px solid #4a5568', 'height': '350px'}),
-                    # Botón para cambiar cámara
+                    html.Img(id="video-feed",
+                             src="./assets/camara1.png",
+                             style={'width': '100%', 'border-radius': '8px', 'height': '350px'})
                 ])
-            ], style={'margin-bottom': '20px'}),
-            
-            # Heatmap de congestión
+            ]),
+
             dbc.Card([
-                dbc.CardHeader("🗺️ Mapa de Congestión"),
-                dbc.CardBody([
-                    dcc.Graph(id="congestion-heatmap")
-                ])
+                dbc.CardHeader("🗺️ Heatmap de Congestión"),
+                dbc.CardBody([dcc.Graph(id="congestion-heatmap")])
             ])
         ], width=4)
-    ], style={'margin-bottom': '20px'}),
-    
-    
-    dcc.Interval(
-        id='interval-component',
-        interval=5*1000,
-        n_intervals=0
-    )
-], fluid=True, style={'background-color': '#1a1a1a', 'min-height': '100vh', 'padding': '20px'})
 
-# Callback
+    ]),
+
+    dcc.Interval(id='interval-component', interval=5000, n_intervals=0)
+
+], fluid=True)
+
+
+# ---------------- CALLBACK PRINCIPAL ----------------
 @callback(
     [Output('avg-wait-time', 'children'),
      Output('reduction-percent', 'children'),
      Output('traffic-trend', 'figure'),
-     Output('vehicle-classification', 'figure'),
      Output('congestion-heatmap', 'figure'),
      Output('traffic-light-status', 'figure'),
      Output('recommendations', 'children'),
-     Output('scatter-plot', 'figure')],  
-    [Input('interval-component', 'n_intervals')]
+     Output('scatter-plot', 'figure')],
+    Input('interval-component', 'n_intervals')
 )
-
 def update_dashboard(n):
-    # Simular datos en tiempo real
-    current_vehicles = np.random.randint(50, 200)
+
     wait_time = np.random.uniform(45, 120)
     reduction = np.random.uniform(15, 35)
-    
-    # Gráfico de tendencia
-    hours = pd.date_range(start='2025-09-22 00:00', periods=24, freq='h')
-    traffic_data = pd.DataFrame({
-        'hora': hours,
-        'autos': np.random.poisson(60, 24),
-        'motos': np.random.poisson(25, 24),
-        'buses': np.random.poisson(15, 24)
-    })
-    
-    trend_fig = px.line(traffic_data, x='hora', y=['autos', 'motos', 'buses'],
-                        title="Flujo Vehicular por Hora",
-                        color_discrete_sequence=['#00d4ff', '#ff6b35', '#f7931e'])
-    trend_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        plot_bgcolor='rgba(26,32,44,0.8)',
-        font_color='#ffffff',
-        title_font_color='#00d4ff'
+
+    df = pd.DataFrame(traffic_history) if len(traffic_history) > 2 else \
+        pd.DataFrame({"time": [], "cars": [], "buses": [], "total": []})
+
+    ai_decision = ai_traffic_controller(traffic_history)
+    light_status = ai_decision["status"]
+    countdown = ai_decision["countdown"]
+    ai_reason = ai_decision["reason"]
+
+    # --------- LINE TREND ----------
+    if not df.empty:
+        trend_fig = px.line(
+            df,
+            x="time",
+            y=["cars", "buses"],
+            title="Flujo Vehicular"
+        )
+        trend_fig.update_layout(template="plotly_dark")
+    else:
+        trend_fig = go.Figure()
+
+    # --------- HEATMAP ----------
+    heatmap_fig = px.imshow(
+        np.random.randint(0, 100, (7, 24)),
+        title="Mapa de Congestión",
+        color_continuous_scale="plasma"
     )
-    
-    # Gráfico de clasificación
-    classification_data = pd.DataFrame({
-        'tipo': ['Autos', 'Motos', 'Buses', 'Camiones'],
-        'cantidad': [65, 20, 10, 5]
-    })
-    classification_fig = px.pie(classification_data, values='cantidad', names='tipo',
-                                title="Clasificación de Vehículos",
-                                color_discrete_sequence=['#00d4ff', '#ff6b35', '#f7931e', '#4ade80'])
-    classification_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        font_color='#ffffff',
-        title_font_color='#00d4ff'
-    )
-    
-    # Heatmap de congestión
-    days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-    hours_heat = list(range(24))
-    congestion_matrix = np.random.randint(0, 100, (7, 24))
-    
-    heatmap_fig = px.imshow(congestion_matrix,
-                            x=hours_heat, y=days,
-                            title="Mapa de Congestión Semanal",
-                            color_continuous_scale="plasma",
-                            aspect="auto")
-    heatmap_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        font_color='#ffffff',
-        title_font_color='#00d4ff'
-    )
-    
-    # Indicador de semáforo
-    light_status = np.random.choice(['verde', 'amarillo', 'rojo'])
+    heatmap_fig.update_layout(template="plotly_dark")
+
+    # --------- SEMÁFORO IA ----------
     light_colors = {'verde': '#4ade80', 'amarillo': '#f7931e', 'rojo': '#ef4444'}
-    countdown = np.random.randint(1, 30)
-    
+
     traffic_light_fig = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = countdown,
-        gauge = {
-            'axis': {'range': [None, 30], 'tickcolor': '#ffffff'},
-            'bar': {'color': light_colors[light_status]},
-            'bgcolor': 'rgba(26,32,44,0.8)',
-            'borderwidth': 2,
-            'bordercolor': '#4a5568',
-            'steps': [
-                {'range': [0, 10], 'color': "rgba(74,85,104,0.3)"},
-                {'range': [10, 25], 'color': "rgba(74,85,104,0.5)"}],
-            'threshold': {
-                'line': {'color': "#ef4444", 'width': 4},
-                'thickness': 0.75, 'value': 25}
-        },
-        title = {'text': f"Semáforo: {light_status.upper()}<br>Tiempo restante", 'font': {'color': '#ffffff'}}
+        mode="gauge+number",
+        value=countdown,
+        gauge={'axis': {'range': [0, 40]},
+               'bar': {'color': light_colors[light_status]}},
+        title={'text': f"Estado: {light_status.upper()}"}
     ))
-    traffic_light_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        font_color='#ffffff',
-        height=300
+    traffic_light_fig.update_layout(template="plotly_dark")
+
+    # --------- SCATTER ----------
+    if len(traffic_history) > 5:
+        scatter_df = pd.DataFrame(traffic_history)
+    else:
+        scatter_df = pd.DataFrame({"total": [0], "wait": [0], "type": ["--"]})
+
+    if "wait" not in scatter_df.columns:
+        scatter_df["wait"] = scatter_df["total"] * 0.8
+
+    if "type" not in scatter_df.columns:
+        scatter_df["type"] = "Principal"
+
+    scatter_fig = px.scatter(
+        scatter_df,
+        x="total",
+        y="wait",
+        color="type",
+        title="Flujo vs Tiempo de Espera"
     )
-    scatter_data = pd.DataFrame({
-        'tiempo_espera': np.random.uniform(30, 150, 50),
-        'num_vehiculos': np.random.uniform(20, 200, 50),
-        'tipo_via': np.random.choice(['Principal', 'Secundaria'], 50)
-    })
-    
-    scatter_fig = px.scatter(scatter_data, 
-                           x='num_vehiculos', 
-                           y='tiempo_espera',
-                           color='tipo_via',
-                           title="Vehículos vs Tiempo de Espera",
-                           color_discrete_sequence=['#00d4ff', '#ff6b35'])
-    scatter_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        plot_bgcolor='rgba(26,32,44,0.8)',
-        font_color='#ffffff',
-        title_font_color='#00d4ff'
-    )
-    
-    # Recomendaciones
+    scatter_fig.update_layout(template="plotly_dark")
+
+    # --------- RECOMENDACIONES IA ----------
     recommendations_text = html.Div([
-        html.H6("🤖 Recomendaciones Automáticas:", 
-                style={'color': '#00d4ff', 'margin-bottom': '10px', 'font-weight': 'bold'}),
-        html.P(f"• Ajustar ciclo en {np.random.randint(5, 15)} segundos", 
-               style={'color': '#a0aec0', 'margin': '5px 0'}),
-        html.P(f"• Congestión {'🔴 alta' if current_vehicles > 150 else '🟡 moderada'}", 
-               style={'color': '#a0aec0', 'margin': '5px 0'}),
-        html.P(f"• Priorizar vía {'🛣️ principal' if np.random.random() > 0.5 else '🛤️ secundaria'}", 
-               style={'color': '#a0aec0', 'margin': '5px 0'})
+        html.H6("🤖 Recomendaciones IA"),
+        html.P(f"• Estado sugerido: {light_status.upper()}"),
+        html.P(f"• Razón: {ai_reason}"),
+        html.P(f"• Flujo actual: {ai_decision['current_flow']} vehículos"),
+        html.P(f"• Autos: {ai_decision['cars']} | Buses: {ai_decision['buses']}"),
+        html.P(f"• Factor congestión: {ai_decision['factor']}"),
     ])
-    
+
     return (f"{wait_time:.1f}s", f"{reduction:.1f}%",
-        trend_fig, classification_fig, heatmap_fig, traffic_light_fig, 
-        recommendations_text, scatter_fig)
-#  callback para alternar imagen entre dos cámaras
+            trend_fig, heatmap_fig, traffic_light_fig,
+            recommendations_text, scatter_fig)
+
+
+# ---------------- VIDEO FEED ----------------
 @callback(
     Output('video-feed', 'src'),
     Output('total-vehicles', 'children'),
@@ -382,28 +372,38 @@ def update_dashboard(n):
 )
 def update_camera(n):
     global latest_counts
+
     frame, counts = get_frame_from_stream(stream_url)
 
     if frame is None:
         return "./assets/camara1.png", "--"
-    # Guardar conteos para otros callbacks
-    latest_counts = counts  
+
+    latest_counts = counts
     total = sum(counts.values())
+    wait_estimate = total * 0.8
+
+    traffic_history.append({
+        "time": datetime.now(),
+        "total": total,
+        "cars": counts.get("car", 0),
+        "buses": counts.get("bus", 0),
+        "wait": wait_estimate,
+        "type": "Principal"
+    })
+
+    traffic_history[:] = traffic_history[-2000:]
 
     return frame, str(total)
-# def switch_camera(n_clicks):
-#     if n_clicks is None or n_clicks % 2 == 0:
-#         return "./assets/camara1.png"
-#     else:
-#         return "./assets/camara2.jpg"
+
+
+# ---------------- PIE CHART ----------------
 @callback(
     Output('vehicle-classification', 'figure'),
     Input('interval-component', 'n_intervals')
 )
 def update_vehicle_pie(n):
-    # Tomar conteos globales
     counts = latest_counts
-    
+
     df = pd.DataFrame({
         'tipo': ['Autos', 'Motos', 'Buses', 'Camiones'],
         'cantidad': [
@@ -414,21 +414,14 @@ def update_vehicle_pie(n):
         ]
     })
 
-    fig = px.pie(
-        df,
-        values='cantidad',
-        names='tipo',
-        title="Clasificación de Vehículos (IA - YOLO)",
-        color_discrete_sequence=['#00d4ff', '#ff6b35', '#f7931e', '#4ade80']
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor='rgba(45,55,72,0.8)',
-        font_color='#ffffff',
-        title_font_color='#00d4ff'
-    )
+    fig = px.pie(df, values='cantidad', names='tipo',
+                 title="Clasificación (IA)",
+                 color_discrete_sequence=['#00d4ff', '#ff6b35', '#f7931e', '#4ade80'])
+    fig.update_layout(template="plotly_dark")
 
     return fig
+
+
+# ---------------- RUN ----------------
 if __name__ == '__main__':
     app.run(debug=True)
