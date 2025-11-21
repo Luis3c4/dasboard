@@ -228,12 +228,20 @@ app.layout = dbc.Container([
 
             dbc.Card([
                 dbc.CardHeader("🚗 Clasificación de Vehículos"),
-                dbc.CardBody([dcc.Graph(id="vehicle-classification")])
+                dbc.CardBody([
+                    html.P("Muestra la distribución porcentual de tipos de vehículos detectados (autos, motos, buses, camiones).",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
+                    dcc.Graph(id="vehicle-classification")
+                ])
             ]),
 
             dbc.Card([
                 dbc.CardHeader("📊 Análisis de Correlación"),
-                dbc.CardBody([dcc.Graph(id="scatter-plot")])
+                dbc.CardBody([
+                    html.P("Gráfico de dispersión que relaciona el volumen de vehículos con el tiempo de espera. Identifica patrones de congestión.",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
+                    dcc.Graph(id="scatter-plot")
+                ])
             ])
         ], width=4),
 
@@ -246,12 +254,18 @@ app.layout = dbc.Container([
 
             dbc.Card([
                 dbc.CardHeader("📈 Tendencia del Tráfico"),
-                dbc.CardBody([dcc.Graph(id="traffic-trend")])
+                dbc.CardBody([
+                    html.P("Evolución del flujo de autos y buses a lo largo del tiempo. Identifica horas pico y tendencias del tráfico.",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
+                    dcc.Graph(id="traffic-trend")
+                ])
             ]),
 
             dbc.Card([
                 dbc.CardHeader("🚦 Control Semafórico IA"),
                 dbc.CardBody([
+                    html.P("Indicador que muestra el estado recomendado del semáforo (verde/amarillo/rojo) y tiempo de ciclo sugerido según la congestión detectada.",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
                     dbc.Row([
                         dbc.Col([dcc.Graph(id="traffic-light-status")], width=6),
                         dbc.Col([
@@ -276,6 +290,8 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("🎥 Cámara en Vivo"),
                 dbc.CardBody([
+                    html.P("Video en tiempo real con detecciones de vehículos superpuestas. Permite verificar visualmente las detecciones del sistema.",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
                     html.Img(id="video-feed",
                              src="./assets/camara1.png",
                              style={'width': '100%', 'border-radius': '8px', 'height': '350px'})
@@ -283,8 +299,12 @@ app.layout = dbc.Container([
             ]),
 
             dbc.Card([
-                dbc.CardHeader("🗺️ Heatmap de Congestión"),
-                dbc.CardBody([dcc.Graph(id="congestion-heatmap")])
+                dbc.CardHeader("🗺️ Predicción IA de Tráfico"),
+                dbc.CardBody([
+                    html.P("Predice el volumen de tráfico esperado en los próximos 5 minutos. La línea punteada muestra la predicción y el área sombreada el intervalo de error.",
+                           style={'font-size': '0.85rem', 'color': '#a0aec0', 'margin-bottom': '10px'}),
+                    dcc.Graph(id="congestion-heatmap")
+                ])
             ])
         ], width=4)
 
@@ -387,7 +407,7 @@ def update_dashboard(n):
         ))
 
     forecast_fig.update_layout(
-        title="🤖 Predicción IA de Tráfico (5 min al futuro)",
+        title="Predicción IA de Tráfico (5 min al futuro)",
         template="plotly_dark",
         paper_bgcolor='rgba(45,55,72,0.8)',
         plot_bgcolor='rgba(26,32,44,0.8)',
